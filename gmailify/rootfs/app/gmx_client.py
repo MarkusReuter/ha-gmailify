@@ -2,6 +2,7 @@
 import asyncio
 import email.parser
 import logging
+import re
 import ssl
 from dataclasses import dataclass
 
@@ -63,6 +64,17 @@ class GmxClient:
         self._client = None
         self._selected_folder = None
         logger.info("Disconnected from %s", self._host)
+
+    async def reconnect(self, folder: str | None = None) -> None:
+        """Reconnect after connection error. Optionally re-select folder."""
+        logger.info("Reconnecting to %s...", self._host)
+        try:
+            await self.disconnect()
+        except Exception:
+            pass
+        await self.connect()
+        if folder:
+            await self.select_folder(folder, force=True)
 
     async def list_folders(self) -> list[str]:
         """List all IMAP folders."""
@@ -134,6 +146,36 @@ class GmxClient:
         logger.debug("Folder %s: UIDVALIDITY=%d, %d UIDs", folder, uidvalidity, len(uids))
         return uidvalidity, uids
 
+    @staticmethod
+    def _extract_email_bytes(response_lines: list) -> bytes | None:
+        """Extract raw RFC 2822 email bytes from IMAP FETCH response.
+
+        aioimaplib may return the IMAP protocol envelope mixed into the
+        bytes data (e.g. b'862 FETCH (UID 11865 RFC822 {23115}\\r\\n<email>').
+        This method strips that prefix to return only the email content.
+        """
+        raw_data = None
+        for item in response_lines:
+            if isinstance(item, bytes):
+                raw_data = item
+                break
+
+        if raw_data is None:
+            return None
+
+        # Strip IMAP FETCH envelope if present
+        # Pattern: "NNN FETCH (UID XXXXX RFC822 {SIZE}\r\n"
+        match = re.match(rb'^\d+ FETCH \([^{]*\{\d+\}\r?\n', raw_data)
+        if match:
+            raw_data = raw_data[match.end():]
+            # Also strip trailing ")" from IMAP response if present
+            if raw_data.endswith(b')\r\n'):
+                raw_data = raw_data[:-3]
+            elif raw_data.endswith(b')'):
+                raw_data = raw_data[:-1]
+
+        return raw_data
+
     async def fetch_raw_email(self, folder: str, uid: int, uidvalidity: int) -> RawEmail | None:
         """Fetch a single email as raw RFC 2822 bytes by UID."""
         response = await self._client.uid("fetch", str(uid), "(RFC822)")
@@ -141,14 +183,16 @@ class GmxClient:
             logger.error("FETCH UID %d failed: %s", uid, response.lines)
             return None
 
-        raw_data = None
-        for item in response.lines:
-            if isinstance(item, bytes):
-                raw_data = item
-                break
+        raw_data = self._extract_email_bytes(response.lines)
 
         if raw_data is None:
             logger.warning("No data for UID %d in %s", uid, folder)
+            return None
+
+        # Sanity check: email should start with a header, not IMAP protocol
+        if raw_data[:20].startswith(b'FETCH') or re.match(rb'^\d+ FETCH', raw_data[:20]):
+            logger.error("UID %d: raw data still contains IMAP envelope: %s",
+                         uid, raw_data[:100])
             return None
 
         # Extract Message-ID from headers only (efficient)
@@ -167,7 +211,7 @@ class GmxClient:
     async def fetch_raw_emails(
         self, folder: str, uids: list[int], uidvalidity: int
     ) -> list[RawEmail]:
-        """Fetch multiple emails by UID."""
+        """Fetch multiple emails by UID with auto-reconnect on connection errors."""
         emails = []
         # Ensure folder is selected (skips if already selected by fetch_uids)
         await self.select_folder(folder)
@@ -177,6 +221,22 @@ class GmxClient:
                 raw = await self.fetch_raw_email(folder, uid, uidvalidity)
                 if raw:
                     emails.append(raw)
+            except (aioimaplib.Abort, asyncio.TimeoutError, OSError) as e:
+                # Connection is broken — reconnect and retry this UID once
+                logger.warning(
+                    "Connection error fetching UID %d from %s: %s. Reconnecting...",
+                    uid, folder, e,
+                )
+                try:
+                    await self.reconnect(folder)
+                    raw = await self.fetch_raw_email(folder, uid, uidvalidity)
+                    if raw:
+                        emails.append(raw)
+                except Exception as retry_err:
+                    logger.error(
+                        "Retry failed for UID %d from %s: %s",
+                        uid, folder, retry_err,
+                    )
             except Exception as e:
                 logger.error("Error fetching UID %d from %s: %s", uid, folder, e)
 
