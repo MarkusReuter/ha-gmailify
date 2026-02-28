@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+### Fixed
+- Auto-reconnect IMAP fetch connection after folder sync errors (aioimaplib Abort/timeout no longer kills the entire sync cycle)
+
 ## 1.1.0
 
 ### Breaking Changes
