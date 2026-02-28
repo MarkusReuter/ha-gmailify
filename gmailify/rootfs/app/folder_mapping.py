@@ -1,13 +1,20 @@
 """GMX IMAP folder to Gmail label mapping."""
 
+# Gmail system label IDs — these already exist and must not be created.
+GMAIL_SYSTEM_LABELS = {
+    "INBOX", "SENT", "DRAFT", "SPAM", "TRASH",
+    "UNREAD", "STARRED", "IMPORTANT",
+}
+
 # GMX uses German folder names. IMAP encodes non-ASCII via modified UTF-7.
 # The folder "Entwürfe" becomes "Entw&APw-rfe" on the wire.
+# Map to Gmail system labels so mails land in the native Gmail folders.
 DEFAULT_FOLDER_MAP: dict[str, str] = {
-    "INBOX": "GMX/Inbox",
-    "Gesendet": "GMX/Sent",
-    "Entw&APw-rfe": "GMX/Drafts",
-    "Papierkorb": "GMX/Trash",
-    "Spam": "GMX/Spam",
+    "INBOX": "INBOX",
+    "Gesendet": "SENT",
+    "Entw&APw-rfe": "DRAFT",
+    "Papierkorb": "TRASH",
+    "Spam": "SPAM",
 }
 
 # Reverse lookup: common user-facing names to IMAP names
