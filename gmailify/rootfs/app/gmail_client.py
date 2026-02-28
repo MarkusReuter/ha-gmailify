@@ -62,6 +62,25 @@ class GmailClient:
         logger.info("Created Gmail label '%s' (ID: %s)", label_name, label_id)
         return label_id
 
+    def message_exists(self, message_id: str) -> bool:
+        """Check if a message with this Message-ID already exists in Gmail."""
+        # Strip angle brackets for the query
+        clean_id = message_id.strip().strip("<>")
+        if not clean_id:
+            return False
+
+        try:
+            response = (
+                self._service.users()
+                .messages()
+                .list(userId="me", q=f"rfc822msgid:{clean_id}", maxResults=1)
+                .execute()
+            )
+            return response.get("resultSizeEstimate", 0) > 0
+        except Exception as e:
+            logger.warning("Gmail Message-ID lookup failed for %s: %s", message_id, e)
+            return False
+
     def import_message(self, raw_email: bytes, label_ids: list[str]) -> str:
         """Import a raw RFC 2822 email into Gmail with given labels.
 
