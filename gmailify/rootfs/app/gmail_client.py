@@ -2,6 +2,7 @@
 import base64
 import email
 import email.policy
+import email.utils
 import logging
 import re
 
@@ -131,10 +132,13 @@ class GmailClient:
         elif len(from_headers) == 0:
             logger.info("Fixing email with missing From header")
             needs_fix = True
-        elif from_headers[0] and "," in from_headers[0]:
-            # Single From header but multiple addresses
-            logger.info("Fixing From header with multiple addresses: %s", from_headers[0])
-            needs_fix = True
+        elif from_headers[0]:
+            # Use email.utils to properly parse addresses (handles quoted commas)
+            addresses = email.utils.getaddresses([from_headers[0]])
+            if len(addresses) > 1:
+                logger.info("Fixing From header with %d addresses: %s",
+                            len(addresses), from_headers[0])
+                needs_fix = True
 
         if not needs_fix:
             return raw_email
@@ -145,11 +149,12 @@ class GmailClient:
 
         # Add back a single clean From header
         if from_headers:
-            first_from = from_headers[0]
-            # If multiple addresses in one header, keep only the first
-            if "," in first_from:
-                first_from = first_from.split(",")[0].strip()
-            msg["From"] = first_from
+            # Parse all addresses properly (respects quoted display names)
+            addresses = email.utils.getaddresses(from_headers)
+            if addresses:
+                msg["From"] = email.utils.formataddr(addresses[0])
+            else:
+                msg["From"] = from_headers[0]
         else:
             msg["From"] = "unknown@unknown"
 
