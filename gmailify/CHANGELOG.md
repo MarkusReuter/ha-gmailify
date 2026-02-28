@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2
+
+### Fixed
+- Prevent concurrent syncs (IDLE-triggered + full sync) from sharing the same IMAP connection, which caused aioimaplib Abort errors
+
 ## 1.1.1
 
 ### Fixed

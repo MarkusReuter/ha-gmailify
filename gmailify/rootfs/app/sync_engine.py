@@ -51,6 +51,7 @@ class SyncEngine:
         self._config = config
         self._stop_event = asyncio.Event()
         self._new_mail_event = asyncio.Event()
+        self._sync_lock = asyncio.Lock()
         self.stats = SyncStats()
         self._initialized = False
 
@@ -201,27 +202,32 @@ class SyncEngine:
             await self._sync_all_folders()
 
     async def _sync_all_folders(self, full_sync: bool = False) -> None:
-        """Sync all configured folders."""
-        for folder_name in self._config.folders:
-            if self._stop_event.is_set():
-                break
-            imap_folder = resolve_folder_name(folder_name)
-            try:
-                await self._sync_folder(imap_folder, full_sync=full_sync)
-                self.stats.folders_processed += 1
-            except Exception as e:
-                self.stats.record_error(f"Sync {imap_folder}: {e}")
-                logger.error("Error syncing folder %s: %s", imap_folder, e, exc_info=True)
-                # Connection is likely broken (Abort, timeout, SSL error).
-                # Reconnect before trying the next folder.
-                try:
-                    await self._gmx_fetch.reconnect()
-                    logger.info("Reconnected fetch client after error in %s", imap_folder)
-                except Exception as reconn_err:
-                    logger.error("Reconnect failed: %s. Aborting sync cycle.", reconn_err)
-                    break
+        """Sync all configured folders.
 
-        self.stats.last_sync = datetime.now(timezone.utc).isoformat()
+        Uses a lock to prevent concurrent syncs (periodic + full sync)
+        from sharing the same IMAP connection.
+        """
+        async with self._sync_lock:
+            for folder_name in self._config.folders:
+                if self._stop_event.is_set():
+                    break
+                imap_folder = resolve_folder_name(folder_name)
+                try:
+                    await self._sync_folder(imap_folder, full_sync=full_sync)
+                    self.stats.folders_processed += 1
+                except Exception as e:
+                    self.stats.record_error(f"Sync {imap_folder}: {e}")
+                    logger.error("Error syncing folder %s: %s", imap_folder, e, exc_info=True)
+                    # Connection is likely broken (Abort, timeout, SSL error).
+                    # Reconnect before trying the next folder.
+                    try:
+                        await self._gmx_fetch.reconnect()
+                        logger.info("Reconnected fetch client after error in %s", imap_folder)
+                    except Exception as reconn_err:
+                        logger.error("Reconnect failed: %s. Aborting sync cycle.", reconn_err)
+                        break
+
+            self.stats.last_sync = datetime.now(timezone.utc).isoformat()
 
     async def _sync_folder(self, folder: str, full_sync: bool = False) -> None:
         """Sync a single folder: fetch new UIDs, import into Gmail."""
