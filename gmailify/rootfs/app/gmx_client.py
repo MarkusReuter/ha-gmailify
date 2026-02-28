@@ -30,6 +30,8 @@ class GmxClient:
         self._password = password
         self._client: aioimaplib.IMAP4_SSL | None = None
         self._connected = False
+        self._selected_folder: str | None = None
+        self._last_uidvalidity: int = 0
 
     @property
     def is_connected(self) -> bool:
@@ -59,6 +61,7 @@ class GmxClient:
                 pass
         self._connected = False
         self._client = None
+        self._selected_folder = None
         logger.info("Disconnected from %s", self._host)
 
     async def list_folders(self) -> list[str]:
@@ -84,10 +87,18 @@ class GmxClient:
         logger.info("Found folders: %s", folders)
         return folders
 
-    async def select_folder(self, folder: str) -> int:
-        """Select a folder (readonly) and return UIDVALIDITY."""
+    async def select_folder(self, folder: str, force: bool = False) -> int:
+        """Select a folder (readonly) and return UIDVALIDITY.
+
+        Skips SELECT if the folder is already selected (unless force=True).
+        """
+        if not force and self._selected_folder == folder:
+            logger.debug("Folder %s already selected, skipping SELECT", folder)
+            return self._last_uidvalidity
+
         response = await self._client.select(folder)
         if response.result != "OK":
+            self._selected_folder = None
             raise RuntimeError(f"SELECT {folder} failed: {response.lines}")
 
         # Extract UIDVALIDITY from response
@@ -102,6 +113,8 @@ class GmxClient:
                 uidvalidity = int(str(line)[start:end].strip())
                 break
 
+        self._selected_folder = folder
+        self._last_uidvalidity = uidvalidity
         return uidvalidity
 
     async def fetch_uids(self, folder: str) -> tuple[int, list[int]]:
@@ -156,7 +169,7 @@ class GmxClient:
     ) -> list[RawEmail]:
         """Fetch multiple emails by UID."""
         emails = []
-        # Select folder first
+        # Ensure folder is selected (skips if already selected by fetch_uids)
         await self.select_folder(folder)
 
         for uid in uids:
@@ -183,7 +196,7 @@ class GmxClient:
         if stop_event is None:
             stop_event = asyncio.Event()
 
-        await self.select_folder(folder)
+        await self.select_folder(folder, force=True)
         logger.info("Starting IDLE on %s", folder)
 
         while not stop_event.is_set():
