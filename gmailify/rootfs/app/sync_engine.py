@@ -212,6 +212,14 @@ class SyncEngine:
             except Exception as e:
                 self.stats.record_error(f"Sync {imap_folder}: {e}")
                 logger.error("Error syncing folder %s: %s", imap_folder, e, exc_info=True)
+                # Connection is likely broken (Abort, timeout, SSL error).
+                # Reconnect before trying the next folder.
+                try:
+                    await self._gmx_fetch.reconnect()
+                    logger.info("Reconnected fetch client after error in %s", imap_folder)
+                except Exception as reconn_err:
+                    logger.error("Reconnect failed: %s. Aborting sync cycle.", reconn_err)
+                    break
 
         self.stats.last_sync = datetime.now(timezone.utc).isoformat()
 
