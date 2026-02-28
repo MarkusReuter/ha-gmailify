@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="30">
+    <title>Gmailify</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { font-size: 24px; margin-bottom: 20px; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .card h2 { font-size: 16px; color: #666; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .status-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .status-row:last-child { border-bottom: none; }
+        .status-label { color: #666; }
+        .status-value { font-weight: 600; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; }
+        .badge-green { background: #e6f4ea; color: #1e7e34; }
+        .badge-red { background: #fce8e6; color: #c5221f; }
+        .badge-yellow { background: #fef7e0; color: #f9a825; }
+        .badge-blue { background: #e8f0fe; color: #1a73e8; }
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; }
+        .btn-primary { background: #1a73e8; color: white; }
+        .btn-primary:hover { background: #1557b0; }
+        .btn-warning { background: #f9a825; color: white; }
+        .btn-warning:hover { background: #f08c00; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .error-list { list-style: none; font-size: 13px; color: #c5221f; }
+        .error-list li { padding: 4px 0; font-family: monospace; }
+        .actions { margin-top: 16px; display: flex; gap: 12px; }
+        .setup-hint { text-align: center; padding: 40px; }
+        .setup-hint p { margin-bottom: 16px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gmailify</h1>
+
+        {% if not has_token %}
+        <div class="card setup-hint">
+            <p>Gmail ist noch nicht verbunden. Bitte zuerst die Autorisierung durchfuehren.</p>
+            <a href="{{ ingress_path }}/setup" class="btn btn-primary">Gmail verbinden</a>
+        </div>
+        {% else %}
+
+        <div class="card">
+            <h2>Verbindungsstatus</h2>
+            <div class="status-row">
+                <span class="status-label">GMX Account</span>
+                <span class="status-value">{{ gmx_email }}</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">GMX IMAP</span>
+                <span class="status-value">
+                    {% if engine_stats and engine_stats.gmx_connected %}
+                        <span class="badge badge-green">Verbunden</span>
+                    {% else %}
+                        <span class="badge badge-red">Getrennt</span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Gmail API</span>
+                <span class="status-value"><span class="badge badge-green">Autorisiert</span></span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Sync-Engine</span>
+                <span class="status-value">
+                    {% if engine_stats and engine_stats.is_running %}
+                        <span class="badge badge-green">Laeuft</span>
+                    {% else %}
+                        <span class="badge badge-yellow">Gestoppt</span>
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Sync-Statistiken</h2>
+            {% if engine_stats %}
+            <div class="status-row">
+                <span class="status-label">Importierte Mails</span>
+                <span class="status-value">{{ engine_stats.messages_imported }}</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Uebersprungen (Duplikate)</span>
+                <span class="status-value">{{ engine_stats.messages_skipped }}</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Fehler</span>
+                <span class="status-value">
+                    {% if engine_stats.errors > 0 %}
+                        <span class="badge badge-red">{{ engine_stats.errors }}</span>
+                    {% else %}
+                        <span class="badge badge-green">0</span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Letzter Sync</span>
+                <span class="status-value">{{ engine_stats.last_sync or 'Noch nicht' }}</span>
+            </div>
+            {% else %}
+            <p style="color: #666; padding: 8px 0;">Noch keine Statistiken verfuegbar.</p>
+            {% endif %}
+        </div>
+
+        {% if db_stats and db_stats.folders %}
+        <div class="card">
+            <h2>Ordner</h2>
+            {% for folder, info in db_stats.folders.items() %}
+            <div class="status-row">
+                <span class="status-label">{{ folder }}</span>
+                <span class="status-value">
+                    {% if info is mapping %}
+                        {{ info.count }} Mails
+                    {% else %}
+                        {{ info }} Mails
+                    {% endif %}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <h2>Aktionen</h2>
+            <div class="actions">
+                <form method="POST" action="{{ ingress_path }}/sync/full">
+                    <button type="submit" class="btn btn-warning"
+                        {% if engine_stats and engine_stats.full_sync_running %}disabled{% endif %}>
+                        {% if engine_stats and engine_stats.full_sync_running %}
+                            Full-Sync laeuft...
+                        {% else %}
+                            Full-Sync starten
+                        {% endif %}
+                    </button>
+                </form>
+                <a href="{{ ingress_path }}/setup" class="btn btn-primary">Gmail neu verbinden</a>
+            </div>
+            <p style="color: #888; font-size: 13px; margin-top: 8px;">
+                Full-Sync laedt alle historischen Mails von GMX nach Gmail. Dies kann je nach Mailbox-Groesse einige Zeit dauern.
+            </p>
+        </div>
+
+        {% if engine_stats and engine_stats.last_errors %}
+        <div class="card">
+            <h2>Letzte Fehler</h2>
+            <ul class="error-list">
+                {% for error in engine_stats.last_errors %}
+                <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% endif %}
+    </div>
+</body>
+</html>

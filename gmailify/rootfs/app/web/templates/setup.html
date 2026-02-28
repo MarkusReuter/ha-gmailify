@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmailify - Gmail verbinden</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { font-size: 24px; margin-bottom: 20px; }
+        .card { background: white; border-radius: 8px; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .card h2 { font-size: 18px; margin-bottom: 16px; }
+        .step { margin-bottom: 20px; }
+        .step-number { display: inline-block; width: 28px; height: 28px; background: #1a73e8; color: white; border-radius: 50%; text-align: center; line-height: 28px; font-weight: 600; font-size: 14px; margin-right: 8px; }
+        .step-text { font-size: 15px; line-height: 1.5; }
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; }
+        .btn-primary { background: #1a73e8; color: white; }
+        .btn-primary:hover { background: #1557b0; }
+        .btn-secondary { background: #e8eaed; color: #333; }
+        .btn-secondary:hover { background: #dadce0; }
+        input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; font-family: monospace; margin: 8px 0; }
+        input[type="text"]:focus { outline: none; border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26,115,232,0.2); }
+        .hint { font-size: 13px; color: #666; margin-top: 8px; line-height: 1.4; }
+        .warning { background: #fef7e0; border-left: 4px solid #f9a825; padding: 12px 16px; border-radius: 4px; margin: 16px 0; font-size: 14px; }
+        .success { background: #e6f4ea; border-left: 4px solid #1e7e34; padding: 12px 16px; border-radius: 4px; margin: 16px 0; font-size: 14px; }
+        .back-link { display: inline-block; margin-bottom: 16px; color: #1a73e8; text-decoration: none; font-size: 14px; }
+        .back-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="{{ ingress_path }}/" class="back-link">&larr; Zurueck zum Dashboard</a>
+        <h1>Gmail verbinden</h1>
+
+        {% if has_token %}
+        <div class="success">
+            Gmail ist bereits verbunden. Du kannst die Autorisierung hier erneuern, falls noetig.
+        </div>
+        {% endif %}
+
+        {% if not has_client_id %}
+        <div class="warning">
+            <strong>Google Client ID fehlt!</strong><br>
+            Bitte trage die Google Client ID und das Client Secret in den Add-on Einstellungen ein.
+            Siehe die Dokumentation (DOCS) fuer eine Schritt-fuer-Schritt Anleitung.
+        </div>
+        {% else %}
+
+        <div class="card">
+            <h2>Gmail autorisieren</h2>
+
+            <div class="step">
+                <span class="step-number">1</span>
+                <span class="step-text">Klicke auf den Button um dich bei Google anzumelden und Gmailify Zugriff zu gewaehren:</span>
+                <div style="margin-top: 12px;">
+                    <a href="{{ auth_url }}" target="_blank" class="btn btn-primary">Bei Google anmelden</a>
+                </div>
+            </div>
+
+            <div class="step">
+                <span class="step-number">2</span>
+                <span class="step-text">
+                    Nach der Anmeldung wirst du zu einer Seite weitergeleitet, die nicht laden kann
+                    (<code>http://localhost:1/...</code>). Das ist normal!
+                    Kopiere den <strong>code</strong>-Parameter aus der URL-Leiste deines Browsers.
+                </span>
+                <div class="hint">
+                    Die URL sieht so aus: <code>http://localhost:1/?code=<strong>4/0ABCD...</strong>&amp;scope=...</code><br>
+                    Kopiere nur den Teil nach <code>code=</code> bis zum naechsten <code>&amp;</code>.
+                </div>
+            </div>
+
+            <div class="step">
+                <span class="step-number">3</span>
+                <span class="step-text">Fuege den Code hier ein und klicke "Verbinden":</span>
+                <form method="POST" action="{{ ingress_path }}/setup/callback">
+                    <input type="text" name="code" placeholder="Authorization Code einfuegen..." required>
+                    <button type="submit" class="btn btn-primary" style="margin-top: 8px;">Verbinden</button>
+                </form>
+            </div>
+        </div>
+
+        {% endif %}
+    </div>
+</body>
+</html>

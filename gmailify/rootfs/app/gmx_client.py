@@ -1,0 +1,239 @@
+"""Async IMAP client for fetching emails from GMX with IDLE support."""
+import asyncio
+import email.parser
+import logging
+import ssl
+from dataclasses import dataclass
+
+import aioimaplib
+
+logger = logging.getLogger(__name__)
+
+IDLE_TIMEOUT_SECONDS = 25 * 60  # Re-issue IDLE every 25 min (before 29 min RFC limit)
+RECONNECT_DELAYS = [5, 10, 30, 60, 300]  # Exponential backoff in seconds
+
+
+@dataclass
+class RawEmail:
+    uid: int
+    folder: str
+    uidvalidity: int
+    message_id: str
+    data: bytes
+
+
+class GmxClient:
+    def __init__(self, host: str, port: int, email_addr: str, password: str):
+        self._host = host
+        self._port = port
+        self._email = email_addr
+        self._password = password
+        self._client: aioimaplib.IMAP4_SSL | None = None
+        self._connected = False
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    async def connect(self) -> None:
+        """Establish IMAP SSL connection and login."""
+        ssl_context = ssl.create_default_context()
+        self._client = aioimaplib.IMAP4_SSL(
+            host=self._host,
+            port=self._port,
+            ssl_context=ssl_context,
+        )
+        await self._client.wait_hello_from_server()
+        response = await self._client.login(self._email, self._password)
+        if response.result != "OK":
+            raise ConnectionError(f"IMAP login failed: {response.lines}")
+        self._connected = True
+        logger.info("Connected to %s as %s", self._host, self._email)
+
+    async def disconnect(self) -> None:
+        """Logout and close connection."""
+        if self._client and self._connected:
+            try:
+                await self._client.logout()
+            except Exception:
+                pass
+        self._connected = False
+        self._client = None
+        logger.info("Disconnected from %s", self._host)
+
+    async def list_folders(self) -> list[str]:
+        """List all IMAP folders."""
+        response = await self._client.list("", "*")
+        if response.result != "OK":
+            raise RuntimeError(f"LIST failed: {response.lines}")
+
+        folders = []
+        for line in response.lines:
+            if not line or line == "LIST completed.":
+                continue
+            # Parse: (\HasNoChildren) "/" "INBOX"
+            # The folder name is the last quoted or unquoted string
+            parts = line.rsplit('" "', 1)
+            if len(parts) == 2:
+                folder_name = parts[1].strip('"')
+            else:
+                parts = line.rsplit(" ", 1)
+                folder_name = parts[-1].strip('"')
+            folders.append(folder_name)
+
+        logger.info("Found folders: %s", folders)
+        return folders
+
+    async def select_folder(self, folder: str) -> int:
+        """Select a folder (readonly) and return UIDVALIDITY."""
+        response = await self._client.select(folder)
+        if response.result != "OK":
+            raise RuntimeError(f"SELECT {folder} failed: {response.lines}")
+
+        # Extract UIDVALIDITY from response
+        uidvalidity = 0
+        for line in response.lines:
+            if "UIDVALIDITY" in str(line):
+                # Parse [UIDVALIDITY 12345]
+                start = str(line).find("UIDVALIDITY") + len("UIDVALIDITY ")
+                end = str(line).find("]", start)
+                if end == -1:
+                    end = len(str(line))
+                uidvalidity = int(str(line)[start:end].strip())
+                break
+
+        return uidvalidity
+
+    async def fetch_uids(self, folder: str) -> tuple[int, list[int]]:
+        """Select folder and return (uidvalidity, sorted list of UIDs)."""
+        uidvalidity = await self.select_folder(folder)
+
+        response = await self._client.uid_search("ALL")
+        if response.result != "OK":
+            raise RuntimeError(f"UID SEARCH failed: {response.lines}")
+
+        uids = []
+        for line in response.lines:
+            if line and line != "SEARCH completed.":
+                uids.extend(int(x) for x in line.split() if x.isdigit())
+
+        uids.sort()
+        logger.debug("Folder %s: UIDVALIDITY=%d, %d UIDs", folder, uidvalidity, len(uids))
+        return uidvalidity, uids
+
+    async def fetch_raw_email(self, folder: str, uid: int, uidvalidity: int) -> RawEmail | None:
+        """Fetch a single email as raw RFC 2822 bytes by UID."""
+        response = await self._client.uid("fetch", str(uid), "(RFC822)")
+        if response.result != "OK":
+            logger.error("FETCH UID %d failed: %s", uid, response.lines)
+            return None
+
+        raw_data = None
+        for item in response.lines:
+            if isinstance(item, bytes):
+                raw_data = item
+                break
+
+        if raw_data is None:
+            logger.warning("No data for UID %d in %s", uid, folder)
+            return None
+
+        # Extract Message-ID from headers only (efficient)
+        header_parser = email.parser.BytesHeaderParser()
+        headers = header_parser.parsebytes(raw_data)
+        message_id = headers.get("Message-ID", f"<no-msgid-{folder}-{uid}>")
+
+        return RawEmail(
+            uid=uid,
+            folder=folder,
+            uidvalidity=uidvalidity,
+            message_id=message_id,
+            data=raw_data,
+        )
+
+    async def fetch_raw_emails(
+        self, folder: str, uids: list[int], uidvalidity: int
+    ) -> list[RawEmail]:
+        """Fetch multiple emails by UID."""
+        emails = []
+        # Select folder first
+        await self.select_folder(folder)
+
+        for uid in uids:
+            try:
+                raw = await self.fetch_raw_email(folder, uid, uidvalidity)
+                if raw:
+                    emails.append(raw)
+            except Exception as e:
+                logger.error("Error fetching UID %d from %s: %s", uid, folder, e)
+
+        return emails
+
+    async def idle_loop(
+        self,
+        folder: str,
+        on_new_mail: "asyncio.Future | None" = None,
+        stop_event: asyncio.Event | None = None,
+    ) -> None:
+        """Run IMAP IDLE on a folder, calling on_new_mail when new messages arrive.
+
+        Re-issues IDLE every 25 minutes (before 29 min RFC timeout).
+        Stops when stop_event is set.
+        """
+        if stop_event is None:
+            stop_event = asyncio.Event()
+
+        await self.select_folder(folder)
+        logger.info("Starting IDLE on %s", folder)
+
+        while not stop_event.is_set():
+            try:
+                idle_task = await self._client.idle_start(timeout=IDLE_TIMEOUT_SECONDS)
+
+                # Wait for either IDLE response or stop signal
+                done, pending = await asyncio.wait(
+                    [asyncio.ensure_future(self._client.wait_server_push()),
+                     asyncio.ensure_future(stop_event.wait())],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # Cancel pending tasks
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                # Stop IDLE
+                self._client.idle_done()
+                await asyncio.wait_for(idle_task, timeout=10)
+
+                if stop_event.is_set():
+                    break
+
+                # Check if we got new mail notification
+                for task in done:
+                    try:
+                        result = task.result()
+                        if result and any("EXISTS" in str(r) for r in (result if isinstance(result, list) else [result])):
+                            logger.info("New mail detected in %s", folder)
+                            if on_new_mail:
+                                on_new_mail.set()
+                    except Exception:
+                        pass
+
+            except asyncio.TimeoutError:
+                # IDLE timeout, re-issue
+                logger.debug("IDLE timeout on %s, re-issuing", folder)
+                continue
+            except Exception as e:
+                logger.error("IDLE error on %s: %s", folder, e)
+                raise
+
+    async def __aenter__(self):
+        await self.connect()
+        return self
+
+    async def __aexit__(self, *args):
+        await self.disconnect()

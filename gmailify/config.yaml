@@ -1,0 +1,37 @@
+name: "Gmailify"
+version: "1.0.0"
+slug: "gmailify"
+description: "Sync GMX emails to Gmail via IMAP IDLE"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: services
+boot: auto
+init: false
+ingress: true
+ingress_stream: true
+ingress_port: 8099
+panel_icon: "mdi:email-sync"
+panel_title: "Gmailify"
+ports:
+  8099/tcp: null
+map:
+  - data:rw
+options:
+  gmx_email: ""
+  gmx_password: ""
+  google_client_id: ""
+  google_client_secret: ""
+  sync_interval_minutes: 15
+  folders:
+    - "INBOX"
+    - "Gesendet"
+schema:
+  gmx_email: email
+  gmx_password: password
+  google_client_id: str
+  google_client_secret: password
+  sync_interval_minutes: "int(1,60)"
+  folders:
+    - str
