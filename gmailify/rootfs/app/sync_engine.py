@@ -38,12 +38,14 @@ class SyncStats:
 class SyncEngine:
     def __init__(
         self,
-        gmx: GmxClient,
+        gmx_idle: GmxClient,
+        gmx_fetch: GmxClient,
         gmail: GmailClient,
         state: SyncState,
         config: Config,
     ):
-        self._gmx = gmx
+        self._gmx_idle = gmx_idle    # Dedicated connection for IDLE
+        self._gmx_fetch = gmx_fetch  # Dedicated connection for fetch/sync
         self._gmail = gmail
         self._state = state
         self._config = config
@@ -59,7 +61,9 @@ class SyncEngine:
 
         while not self._stop_event.is_set():
             try:
-                await self._gmx.connect()
+                # Connect both IMAP clients
+                await self._gmx_fetch.connect()
+                await self._gmx_idle.connect()
                 self.stats.gmx_connected = True
                 reconnect_attempt = 0
 
@@ -68,7 +72,7 @@ class SyncEngine:
                     await self._initialize_folders()
                     self._initialized = True
 
-                # Run IDLE and periodic sync in parallel
+                # Run IDLE and periodic sync in parallel on separate connections
                 await asyncio.gather(
                     self._idle_inbox(),
                     self._periodic_sync(),
@@ -76,12 +80,13 @@ class SyncEngine:
             except Exception as e:
                 self.stats.gmx_connected = False
                 self.stats.record_error(f"Connection error: {e}")
-                logger.error("Connection error: %s", e)
+                logger.error("Connection error: %s", e, exc_info=True)
 
-                try:
-                    await self._gmx.disconnect()
-                except Exception:
-                    pass
+                for client in (self._gmx_idle, self._gmx_fetch):
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
 
                 if self._stop_event.is_set():
                     break
@@ -97,7 +102,11 @@ class SyncEngine:
                 reconnect_attempt += 1
 
         self.stats.is_running = False
-        await self._gmx.disconnect()
+        for client in (self._gmx_idle, self._gmx_fetch):
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
 
     async def stop(self) -> None:
         """Signal the engine to stop."""
@@ -138,7 +147,7 @@ class SyncEngine:
                 continue
 
             try:
-                uidvalidity, uids = await self._gmx.fetch_uids(imap_folder)
+                uidvalidity, uids = await self._gmx_fetch.fetch_uids(imap_folder)
                 await self._state.mark_all_as_seen(imap_folder, uidvalidity, uids)
                 logger.info(
                     "Initialized %s: marked %d existing messages as seen",
@@ -158,7 +167,7 @@ class SyncEngine:
         while not self._stop_event.is_set():
             try:
                 logger.info("Starting IDLE on %s", inbox_folder)
-                await self._gmx.idle_loop(
+                await self._gmx_idle.idle_loop(
                     folder=inbox_folder,
                     on_new_mail=self._new_mail_event,
                     stop_event=self._stop_event,
@@ -201,13 +210,13 @@ class SyncEngine:
                 self.stats.folders_processed += 1
             except Exception as e:
                 self.stats.record_error(f"Sync {imap_folder}: {e}")
-                logger.error("Error syncing folder %s: %s", imap_folder, e)
+                logger.error("Error syncing folder %s: %s", imap_folder, e, exc_info=True)
 
         self.stats.last_sync = datetime.now(timezone.utc).isoformat()
 
     async def _sync_folder(self, folder: str) -> None:
         """Sync a single folder: fetch new UIDs, import into Gmail."""
-        uidvalidity, all_uids = await self._gmx.fetch_uids(folder)
+        uidvalidity, all_uids = await self._gmx_fetch.fetch_uids(folder)
         unsynced = await self._state.get_unsynced_uids(folder, uidvalidity, all_uids)
 
         if not unsynced:
@@ -225,7 +234,7 @@ class SyncEngine:
                 break
 
             batch = unsynced[i : i + BATCH_SIZE]
-            emails = await self._gmx.fetch_raw_emails(folder, batch, uidvalidity)
+            emails = await self._gmx_fetch.fetch_raw_emails(folder, batch, uidvalidity)
             self.stats.messages_fetched += len(emails)
 
             for raw_email in emails:
@@ -261,5 +270,5 @@ class SyncEngine:
             )
             logger.error(
                 "Failed to import UID %d from %s: %s",
-                raw_email.uid, raw_email.folder, e,
+                raw_email.uid, raw_email.folder, e, exc_info=True,
             )

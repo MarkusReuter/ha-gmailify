@@ -49,13 +49,20 @@ async def async_main() -> None:
     if config.has_gmail_token:
         logger.info("Gmail token found, starting sync engine...")
         gmail = GmailClient(config.gmail_credentials)
-        gmx = GmxClient(
+        # Two separate IMAP connections: IDLE and fetch can't share one
+        gmx_idle = GmxClient(
             host=config.gmx_host,
             port=config.gmx_port,
             email_addr=config.gmx_email,
             password=config.gmx_password,
         )
-        engine = SyncEngine(gmx, gmail, state, config)
+        gmx_fetch = GmxClient(
+            host=config.gmx_host,
+            port=config.gmx_port,
+            email_addr=config.gmx_email,
+            password=config.gmx_password,
+        )
+        engine = SyncEngine(gmx_idle, gmx_fetch, gmail, state, config)
     else:
         logger.info("No Gmail token found. Open the web UI to authorize Gmail.")
 
