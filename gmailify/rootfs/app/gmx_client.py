@@ -146,29 +146,46 @@ class GmxClient:
         logger.debug("Folder %s: UIDVALIDITY=%d, %d UIDs", folder, uidvalidity, len(uids))
         return uidvalidity, uids
 
+    _first_fetch_logged = False
+
     @staticmethod
-    def _extract_email_bytes(response_lines: list) -> bytes | None:
+    def _extract_email_bytes(response_lines: list, uid: int = 0) -> bytes | None:
         """Extract raw RFC 2822 email bytes from IMAP FETCH response.
 
         aioimaplib may return the IMAP protocol envelope mixed into the
-        bytes data (e.g. b'862 FETCH (UID 11865 RFC822 {23115}\\r\\n<email>').
-        This method strips that prefix to return only the email content.
+        bytes data. This method handles multiple formats:
+        - Pure email bytes (ideal case)
+        - IMAP envelope + email concatenated in one bytes/bytearray item
+        - Email data as bytearray instead of bytes
         """
-        raw_data = None
-        for item in response_lines:
-            if isinstance(item, bytes):
-                raw_data = item
-                break
+        # Log full response structure for the first email to aid debugging
+        if not GmxClient._first_fetch_logged:
+            GmxClient._first_fetch_logged = True
+            for i, item in enumerate(response_lines):
+                t = type(item).__name__
+                preview = repr(item[:120]) if isinstance(item, (bytes, bytearray)) else repr(item[:120])
+                logger.info("FETCH response[%d] type=%s preview=%s", i, t, preview)
 
-        if raw_data is None:
+        # Collect all binary items (bytes AND bytearray)
+        binary_items = []
+        for item in response_lines:
+            if isinstance(item, (bytes, bytearray)):
+                binary_items.append(bytes(item))
+
+        if not binary_items:
+            logger.error("UID %d: no binary data in FETCH response", uid)
             return None
+
+        # Use the largest binary item (email >> protocol lines)
+        raw_data = max(binary_items, key=len)
 
         # Strip IMAP FETCH envelope if present
         # Pattern: "NNN FETCH (UID XXXXX RFC822 {SIZE}\r\n"
-        match = re.match(rb'^\d+ FETCH \([^{]*\{\d+\}\r?\n', raw_data)
+        match = re.match(rb'^(?:\* )?\d+ FETCH \([^{]*\{\d+\}\r?\n', raw_data)
         if match:
+            logger.debug("Stripped %d bytes IMAP envelope from UID %d", match.end(), uid)
             raw_data = raw_data[match.end():]
-            # Also strip trailing ")" from IMAP response if present
+            # Strip trailing ")" from IMAP response
             if raw_data.endswith(b')\r\n'):
                 raw_data = raw_data[:-3]
             elif raw_data.endswith(b')'):
@@ -183,7 +200,7 @@ class GmxClient:
             logger.error("FETCH UID %d failed: %s", uid, response.lines)
             return None
 
-        raw_data = self._extract_email_bytes(response.lines)
+        raw_data = self._extract_email_bytes(response.lines, uid)
 
         if raw_data is None:
             logger.warning("No data for UID %d in %s", uid, folder)
