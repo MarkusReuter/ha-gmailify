@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.3
+
+### Fixed
+- Proactive NOOP health check before each sync cycle prevents GMX idle-timeout (`BYE timeout`) from skipping the first folder
+
 ## 1.1.2
 
 ### Fixed

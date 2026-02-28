@@ -201,6 +201,20 @@ class SyncEngine:
 
             await self._sync_all_folders()
 
+    async def _ensure_fetch_alive(self) -> None:
+        """Send NOOP to verify the fetch connection is alive.
+
+        GMX drops idle IMAP connections after ~10 minutes. Reconnect
+        proactively so the first folder in the sync cycle doesn't fail.
+        """
+        try:
+            response = await self._gmx_fetch._client.noop()
+            if response.result != "OK":
+                raise ConnectionError(f"NOOP failed: {response.lines}")
+        except Exception as e:
+            logger.info("Fetch connection dead (%s), reconnecting...", e)
+            await self._gmx_fetch.reconnect()
+
     async def _sync_all_folders(self, full_sync: bool = False) -> None:
         """Sync all configured folders.
 
@@ -208,6 +222,9 @@ class SyncEngine:
         from sharing the same IMAP connection.
         """
         async with self._sync_lock:
+            # Proactive health check — GMX drops idle connections
+            await self._ensure_fetch_alive()
+
             for folder_name in self._config.folders:
                 if self._stop_event.is_set():
                     break
