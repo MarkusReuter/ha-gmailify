@@ -1,6 +1,6 @@
 # Gmailify - Setup-Anleitung
 
-Dieses Add-on synchronisiert Emails von GMX nach Gmail ueber IMAP IDLE (Echtzeit) und bewahrt dabei die Original-Mailheader.
+Google stellt Gmailify ein. Dieses Add-on uebertraegt Emails von GMX per IMAP IDLE sekundenaktuell nach Gmail -- mit vollstaendigen Original-Headern, Anhang und korrektem Absender.
 
 ## Voraussetzungen
 
@@ -104,12 +104,14 @@ Das Add-on haelt eine permanente IMAP IDLE-Verbindung zur GMX-Inbox offen. Sobal
 ### Periodischer Sync (andere Ordner)
 Alle konfigurierten Ordner (z.B. Gesendet) werden regelmaessig auf neue Mails geprueft (Standard: alle 15 Minuten).
 
-### Labels in Gmail
-Die Mails erscheinen in Gmail unter Labels:
-- `GMX/Inbox` - Eingehende Mails
-- `GMX/Sent` - Gesendete Mails
-- `GMX/Drafts` - Entwuerfe
-- etc.
+### Ordner in Gmail
+GMX-Ordner werden auf die nativen Gmail-Ordner abgebildet:
+- **INBOX** → Gmail Posteingang
+- **Gesendet** → Gmail Gesendet
+- **Entwuerfe** → Gmail Entwuerfe
+- **Spam** → Gmail Spam
+- **Papierkorb** → Gmail Papierkorb
+- Eigene Ordner (z.B. "Shopping") → Label `GMX/Shopping`
 
 ### Deduplizierung
 Das Add-on trackt importierte Mails per IMAP-UID und Message-ID. Doppelte Imports werden zuverlaessig verhindert, auch nach Neustart.
