@@ -114,20 +114,21 @@ class SyncEngine:
         self._new_mail_event.set()
 
     async def trigger_full_sync(self) -> None:
-        """Trigger a full sync of all folders (imports all historical messages)."""
+        """Trigger a full sync of all folders (imports all historical messages).
+
+        Does NOT reset state first — instead marks all UIDs as unsynced by
+        comparing against current GMX UIDs. Message-ID dedup (both local DB
+        and Gmail-side) prevents duplicates. Progress is preserved on restart.
+        """
         if self.stats.full_sync_running:
             logger.warning("Full sync already in progress")
             return
 
         self.stats.full_sync_running = True
-        logger.info("Starting full sync...")
+        logger.info("Starting full sync (resumable, no state reset)...")
 
         try:
-            for folder_name in self._config.folders:
-                imap_folder = resolve_folder_name(folder_name)
-                await self._state.reset_folder(imap_folder)
-
-            await self._sync_all_folders()
+            await self._sync_all_folders(full_sync=True)
         except Exception as e:
             self.stats.record_error(f"Full sync error: {e}")
             logger.error("Full sync error: %s", e)
@@ -199,14 +200,14 @@ class SyncEngine:
 
             await self._sync_all_folders()
 
-    async def _sync_all_folders(self) -> None:
+    async def _sync_all_folders(self, full_sync: bool = False) -> None:
         """Sync all configured folders."""
         for folder_name in self._config.folders:
             if self._stop_event.is_set():
                 break
             imap_folder = resolve_folder_name(folder_name)
             try:
-                await self._sync_folder(imap_folder)
+                await self._sync_folder(imap_folder, full_sync=full_sync)
                 self.stats.folders_processed += 1
             except Exception as e:
                 self.stats.record_error(f"Sync {imap_folder}: {e}")
@@ -214,10 +215,15 @@ class SyncEngine:
 
         self.stats.last_sync = datetime.now(timezone.utc).isoformat()
 
-    async def _sync_folder(self, folder: str) -> None:
+    async def _sync_folder(self, folder: str, full_sync: bool = False) -> None:
         """Sync a single folder: fetch new UIDs, import into Gmail."""
         uidvalidity, all_uids = await self._gmx_fetch.fetch_uids(folder)
-        unsynced = await self._state.get_unsynced_uids(folder, uidvalidity, all_uids)
+
+        if full_sync:
+            # Full sync: get ALL UIDs not yet in our DB (includes initial "seen" ones)
+            unsynced = await self._state.get_unsynced_uids_full(folder, uidvalidity, all_uids)
+        else:
+            unsynced = await self._state.get_unsynced_uids(folder, uidvalidity, all_uids)
 
         if not unsynced:
             logger.debug("No new messages in %s", folder)
@@ -243,11 +249,27 @@ class SyncEngine:
     async def _import_single(self, raw_email, label_id: str) -> None:
         """Import a single email with error handling."""
         try:
-            # Message-ID dedup check
+            # Layer 1: Local DB dedup (fast)
             if await self._state.is_message_id_synced(raw_email.message_id):
                 self.stats.messages_skipped += 1
                 logger.debug(
-                    "Skipping UID %d (Message-ID already synced)", raw_email.uid
+                    "Skipping UID %d (Message-ID already in local DB)", raw_email.uid
+                )
+                return
+
+            # Layer 2: Gmail-side dedup (catches mails from Google's Gmailify)
+            if self._gmail.message_exists(raw_email.message_id):
+                self.stats.messages_skipped += 1
+                logger.info(
+                    "Skipping UID %d (Message-ID already in Gmail)", raw_email.uid
+                )
+                # Mark as synced locally so we don't check Gmail again
+                await self._state.mark_synced(
+                    folder=raw_email.folder,
+                    uid=raw_email.uid,
+                    uidvalidity=raw_email.uidvalidity,
+                    message_id=raw_email.message_id,
+                    gmail_id="existing",
                 )
                 return
 

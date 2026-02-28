@@ -107,6 +107,42 @@ class SyncState:
         synced = await self.get_synced_uids(folder, uidvalidity)
         return [uid for uid in all_uids if uid not in synced]
 
+    async def get_unsynced_uids_full(
+        self, folder: str, uidvalidity: int, all_uids: list[int]
+    ) -> list[int]:
+        """Return UIDs not yet actually imported (for full sync).
+
+        Unlike get_unsynced_uids, this also includes UIDs that were only
+        marked as 'seen' during initial setup (gmail_id is empty).
+        """
+        stored_validity = await self.get_uidvalidity(folder)
+
+        if stored_validity is not None and stored_validity != uidvalidity:
+            logger.warning(
+                "UIDVALIDITY changed for %s: %d -> %d. Resetting UID tracking.",
+                folder, stored_validity, uidvalidity,
+            )
+            await self._db.execute(
+                "DELETE FROM synced_messages WHERE folder = ? AND uidvalidity = ?",
+                (folder, stored_validity),
+            )
+            await self._db.commit()
+
+        await self.set_uidvalidity(folder, uidvalidity)
+
+        # Get UIDs that have actually been imported (non-empty gmail_id, not 'existing' placeholder from initial)
+        actually_synced = set()
+        async with self._db.execute(
+            """SELECT uid FROM synced_messages
+               WHERE folder = ? AND uidvalidity = ?
+               AND gmail_id != ''""",
+            (folder, uidvalidity),
+        ) as cursor:
+            async for row in cursor:
+                actually_synced.add(row[0])
+
+        return [uid for uid in all_uids if uid not in actually_synced]
+
     async def is_message_id_synced(self, message_id: str) -> bool:
         """Check if a Message-ID has already been imported."""
         mid_hash = self._hash_message_id(message_id)
