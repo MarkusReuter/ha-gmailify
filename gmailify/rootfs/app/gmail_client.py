@@ -94,63 +94,51 @@ class GmailClient:
     def _sanitize_headers(raw_email: bytes) -> bytes:
         """Fix malformed headers that Gmail API rejects.
 
-        - Ensures exactly one 'From' header (keeps first, removes duplicates)
-        - Adds a placeholder 'From' if missing
+        Uses Python's email module for robust parsing, then fixes:
+        - Multiple 'From' headers (keeps first, removes rest)
+        - Missing 'From' header (adds placeholder)
+        - From header with multiple addresses (keeps first address only)
         """
-        # Split into header section and body
-        if b"\r\n\r\n" in raw_email:
-            header_bytes, body = raw_email.split(b"\r\n\r\n", 1)
-            separator = b"\r\n\r\n"
-            line_sep = b"\r\n"
-        elif b"\n\n" in raw_email:
-            header_bytes, body = raw_email.split(b"\n\n", 1)
-            separator = b"\n\n"
-            line_sep = b"\n"
+        try:
+            msg = email.message_from_bytes(raw_email, policy=email.policy.compat32)
+        except Exception as e:
+            logger.warning("Failed to parse email for sanitization: %s", e)
+            return raw_email
+
+        from_headers = msg.get_all("From", [])
+        needs_fix = False
+
+        if len(from_headers) > 1:
+            logger.info("Fixing email with %d From headers (keeping first: %s)",
+                        len(from_headers), from_headers[0])
+            needs_fix = True
+        elif len(from_headers) == 0:
+            logger.info("Fixing email with missing From header")
+            needs_fix = True
+        elif from_headers[0] and "," in from_headers[0]:
+            # Single From header but multiple addresses
+            logger.info("Fixing From header with multiple addresses: %s", from_headers[0])
+            needs_fix = True
+
+        if not needs_fix:
+            return raw_email
+
+        # Remove all existing From headers
+        while "From" in msg:
+            del msg["From"]
+
+        # Add back a single clean From header
+        if from_headers:
+            first_from = from_headers[0]
+            # If multiple addresses in one header, keep only the first
+            if "," in first_from:
+                first_from = first_from.split(",")[0].strip()
+            msg["From"] = first_from
         else:
-            return raw_email  # Can't parse, try as-is
+            msg["From"] = "unknown@unknown"
 
-        # Unfold headers (continuation lines start with space/tab)
-        header_text = header_bytes.decode("utf-8", errors="replace")
-        lines = header_text.split(line_sep.decode())
+        return msg.as_bytes()
 
-        # Build list of (header_name, full_line) tuples
-        headers = []
-        for line in lines:
-            if line and line[0] in (" ", "\t") and headers:
-                # Continuation line - append to previous header
-                headers[-1] = (headers[-1][0], headers[-1][1] + line_sep.decode() + line)
-            else:
-                # New header
-                colon_pos = line.find(":")
-                if colon_pos > 0:
-                    name = line[:colon_pos].strip()
-                    headers.append((name, line))
-                elif line:
-                    headers.append(("", line))
-
-        # Fix From headers: keep only the first one
-        from_count = sum(1 for name, _ in headers if name.lower() == "from")
-
-        if from_count > 1:
-            seen_from = False
-            new_headers = []
-            for name, line in headers:
-                if name.lower() == "from":
-                    if not seen_from:
-                        seen_from = True
-                        new_headers.append((name, line))
-                    else:
-                        logger.debug("Removing duplicate From header")
-                else:
-                    new_headers.append((name, line))
-            headers = new_headers
-        elif from_count == 0:
-            headers.insert(0, ("From", "From: unknown@unknown"))
-            logger.debug("Added missing From header")
-
-        # Reassemble
-        header_text = line_sep.decode().join(line for _, line in headers)
-        return header_text.encode("utf-8", errors="replace") + separator + body
 
     def _load_labels(self) -> None:
         """Fetch all existing labels into cache."""
