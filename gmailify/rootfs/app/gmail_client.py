@@ -6,6 +6,7 @@ import email.utils
 import logging
 import re
 
+from folder_mapping import GMAIL_SYSTEM_LABELS
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
@@ -35,8 +36,13 @@ class GmailClient:
     def ensure_label(self, label_name: str) -> str:
         """Get or create a Gmail label. Returns the label ID.
 
-        Supports nested labels like 'GMX/Inbox'.
+        System labels (INBOX, SENT, DRAFT, etc.) are returned as-is.
+        Custom labels like 'GMX/Inbox' are created if they don't exist.
         """
+        # System labels already exist; their ID equals their name
+        if label_name in GMAIL_SYSTEM_LABELS:
+            return label_name
+
         if label_name in self._label_cache:
             return self._label_cache[label_name]
 

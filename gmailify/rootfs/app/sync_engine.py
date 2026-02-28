@@ -273,7 +273,7 @@ class SyncEngine:
                 )
                 return
 
-            gmail_id = self._gmail.import_message(raw_email.data, [label_id])
+            gmail_id = self._gmail.import_message(raw_email.data, [label_id, "UNREAD"])
             await self._state.mark_synced(
                 folder=raw_email.folder,
                 uid=raw_email.uid,
