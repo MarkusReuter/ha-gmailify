@@ -1,13 +1,12 @@
 """Gmail API client for importing messages and managing labels."""
+import base64
 import email
 import email.policy
-import io
 import logging
 import re
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 
 logger = logging.getLogger(__name__)
 
@@ -86,21 +85,19 @@ class GmailClient:
 
         Uses messages.import_() which preserves original headers.
         Sanitizes malformed headers (duplicate From, etc.) before import.
+        Uses base64url raw field to avoid ASCII encoding issues with
+        non-ASCII email content.
         Returns the Gmail message ID.
         """
         raw_email = self._sanitize_headers(raw_email)
 
-        media = MediaIoBaseUpload(
-            io.BytesIO(raw_email),
-            mimetype="message/rfc822",
-        )
+        raw_b64 = base64.urlsafe_b64encode(raw_email).decode("ascii")
         response = (
             self._service.users()
             .messages()
             .import_(
                 userId="me",
-                body={"labelIds": label_ids},
-                media_body=media,
+                body={"raw": raw_b64, "labelIds": label_ids},
                 neverMarkSpam=True,
                 processForCalendar=False,
                 internalDateSource="dateHeader",
