@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4
+
+### Changed
+- Fetch connection is now opened per sync cycle and closed afterward instead of kept idle. Eliminates GMX `BYE timeout` every 15 minutes and "Task was destroyed but it is pending" warnings.
+
 ## 1.1.3
 
 ### Fixed

@@ -40,6 +40,16 @@ class GmxClient:
 
     async def connect(self) -> None:
         """Establish IMAP SSL connection and login."""
+        if self._connected:
+            return
+        # Clean up any stale client before creating a new one
+        if self._client is not None:
+            try:
+                await self.disconnect()
+            except Exception:
+                self._client = None
+                self._connected = False
+                self._selected_folder = None
         ssl_context = ssl.create_default_context()
         self._client = aioimaplib.IMAP4_SSL(
             host=self._host,
