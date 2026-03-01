@@ -286,6 +286,14 @@ class SyncEngine:
                 logger.debug(
                     "Skipping UID %d (Message-ID already in local DB)", raw_email.uid
                 )
+                # Mark this UID as synced so it doesn't reappear as "new" every cycle
+                await self._state.mark_synced(
+                    folder=raw_email.folder,
+                    uid=raw_email.uid,
+                    uidvalidity=raw_email.uidvalidity,
+                    message_id=raw_email.message_id,
+                    gmail_id="dedup",
+                )
                 return
 
             # Layer 2: Gmail-side dedup (catches mails from Google's Gmailify)

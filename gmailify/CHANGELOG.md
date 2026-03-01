@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.5
+
+### Fixed
+- IDLE now detects dead GMX connections: `asyncio.wait` has a timeout so hung connections are caught and IDLE is re-issued instead of blocking forever
+- Layer 1 dedup now marks UIDs as synced when the Message-ID already exists in the local DB, preventing the same messages from reappearing as "new" every sync cycle
+
 ## 1.1.4
 
 ### Changed
