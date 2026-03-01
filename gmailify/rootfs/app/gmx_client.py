@@ -10,7 +10,7 @@ import aioimaplib
 
 logger = logging.getLogger(__name__)
 
-IDLE_TIMEOUT_SECONDS = 25 * 60  # Re-issue IDLE every 25 min (before 29 min RFC limit)
+IDLE_TIMEOUT_SECONDS = 5 * 60  # Re-issue IDLE every 5 min (GMX drops connections faster than RFC limit)
 RECONNECT_DELAYS = [5, 10, 30, 60, 300]  # Exponential backoff in seconds
 
 
@@ -277,7 +277,8 @@ class GmxClient:
     ) -> None:
         """Run IMAP IDLE on a folder, calling on_new_mail when new messages arrive.
 
-        Re-issues IDLE every 25 minutes (before 29 min RFC timeout).
+        Re-issues IDLE every IDLE_TIMEOUT_SECONDS.
+        Uses timeout on asyncio.wait so dead connections don't block forever.
         Stops when stop_event is set.
         """
         if stop_event is None:
@@ -290,11 +291,14 @@ class GmxClient:
             try:
                 idle_task = await self._client.idle_start(timeout=IDLE_TIMEOUT_SECONDS)
 
-                # Wait for either IDLE response or stop signal
+                push_future = asyncio.ensure_future(self._client.wait_server_push())
+                stop_future = asyncio.ensure_future(stop_event.wait())
+
+                # Timeout prevents hanging forever on a dead connection
                 done, pending = await asyncio.wait(
-                    [asyncio.ensure_future(self._client.wait_server_push()),
-                     asyncio.ensure_future(stop_event.wait())],
+                    [push_future, stop_future],
                     return_when=asyncio.FIRST_COMPLETED,
+                    timeout=IDLE_TIMEOUT_SECONDS,
                 )
 
                 # Cancel pending tasks
@@ -312,10 +316,16 @@ class GmxClient:
                 if stop_event.is_set():
                     break
 
+                # Timeout (done is empty) — re-issue IDLE
+                if not done:
+                    logger.debug("IDLE timeout on %s, re-issuing", folder)
+                    continue
+
                 # Check if we got new mail notification
-                for task in done:
+                if push_future in done:
                     try:
-                        result = task.result()
+                        result = push_future.result()
+                        logger.debug("IDLE push on %s: %s", folder, result)
                         if result and any("EXISTS" in str(r) for r in (result if isinstance(result, list) else [result])):
                             logger.info("New mail detected in %s", folder)
                             if on_new_mail:
@@ -324,7 +334,6 @@ class GmxClient:
                         pass
 
             except asyncio.TimeoutError:
-                # IDLE timeout, re-issue
                 logger.debug("IDLE timeout on %s, re-issuing", folder)
                 continue
             except Exception as e:
