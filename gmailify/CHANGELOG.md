@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.7
+
+### Fixed
+- Dashboard now shows actual Gmail API status instead of always "Autorisiert" — displays "Token abgelaufen" with re-auth link when credentials are invalid
+- Sync engine detects expired Gmail tokens (`RefreshError`) and stops the sync cycle immediately instead of failing on every message individually
+
 ## 1.1.6
 
 ### Fixed

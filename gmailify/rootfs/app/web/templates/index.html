@@ -32,6 +32,7 @@
         .actions { margin-top: 16px; display: flex; gap: 12px; }
         .setup-hint { text-align: center; padding: 40px; }
         .setup-hint p { margin-bottom: 16px; color: #666; }
+        .reauth-link { margin-left: 8px; }
     </style>
 </head>
 <body>
@@ -63,7 +64,14 @@
             </div>
             <div class="status-row">
                 <span class="status-label">Gmail API</span>
-                <span class="status-value"><span class="badge badge-green">Autorisiert</span></span>
+                <span class="status-value">
+                    {% if engine_stats and engine_stats.gmail_ok %}
+                        <span class="badge badge-green">Autorisiert</span>
+                    {% else %}
+                        <span class="badge badge-red">Token abgelaufen</span>
+                        <a href="{{ ingress_path }}/setup" class="reauth-link">Neu verbinden</a>
+                    {% endif %}
+                </span>
             </div>
             <div class="status-row">
                 <span class="status-label">Sync-Engine</span>

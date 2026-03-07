@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from google.auth.exceptions import RefreshError
+
 from config import Config
 from folder_mapping import get_gmail_label, resolve_folder_name
 from gmail_client import GmailClient
@@ -25,6 +27,7 @@ class SyncStats:
     last_sync: str = ""
     is_running: bool = False
     gmx_connected: bool = False
+    gmail_ok: bool = True
     full_sync_running: bool = False
     last_errors: list[str] = field(default_factory=list)
 
@@ -321,10 +324,18 @@ class SyncEngine:
                 gmail_id=gmail_id,
             )
             self.stats.messages_imported += 1
+            self.stats.gmail_ok = True
             logger.info(
                 "Imported UID %d from %s -> Gmail %s",
                 raw_email.uid, raw_email.folder, gmail_id,
             )
+        except RefreshError as e:
+            self.stats.gmail_ok = False
+            self.stats.record_error(
+                f"Gmail token expired — re-authenticate via web UI"
+            )
+            logger.error("Gmail token expired or revoked: %s", e)
+            raise  # Stop the entire sync cycle, no point retrying
         except Exception as e:
             self.stats.record_error(
                 f"Import UID {raw_email.uid} from {raw_email.folder}: {e}"
