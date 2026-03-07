@@ -42,6 +42,14 @@ class GmailClient:
         self._label_cache.clear()
         logger.info("Gmail API client credentials reloaded")
 
+    def check_connection(self) -> bool:
+        """Test if Gmail API credentials are valid by making a lightweight call."""
+        try:
+            self._service.users().getProfile(userId="me").execute()
+            return True
+        except Exception:
+            return False
+
     def ensure_label(self, label_name: str) -> str:
         """Get or create a Gmail label. Returns the label ID.
 

@@ -70,6 +70,7 @@ async def handle_index(request: web.Request) -> dict:
             "messages_fetched": engine.stats.messages_fetched,
             "errors": engine.stats.errors,
             "last_sync": engine.stats.last_sync,
+            "gmail_ok": engine.stats.gmail_ok,
             "full_sync_running": engine.stats.full_sync_running,
             "last_errors": engine.stats.last_errors[-10:],
         }
@@ -152,6 +153,7 @@ async def handle_oauth_callback(request: web.Request) -> web.Response:
     engine = request.app.get("engine")
     if engine and hasattr(engine, "_gmail"):
         engine._gmail.reload_credentials(credentials)
+        engine.stats.gmail_ok = True
         logger.info("Gmail client credentials hot-reloaded")
 
     # Redirect to dashboard
