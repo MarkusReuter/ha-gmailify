@@ -204,7 +204,11 @@ class SyncEngine:
             if self._stop_event.is_set():
                 break
 
-            await self._sync_all_folders()
+            try:
+                await self._sync_all_folders()
+            except Exception as e:
+                self.stats.record_error(f"Sync cycle failed: {e}")
+                logger.error("Sync cycle failed: %s", e, exc_info=True)
 
     async def _sync_all_folders(self, full_sync: bool = False) -> None:
         """Sync all configured folders.
