@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.8
+
+### Fixed
+- Fix IDLE timeout race condition: `idle_start` and `asyncio.wait` both had the same 5-minute timeout, causing double DONE commands that corrupted IMAP protocol state and silently stopped IDLE notifications
+- Periodic sync loop now survives errors (RefreshError, network issues) instead of crashing permanently, which would cause IDLE notifications to stop being processed
+
 ## 1.1.7
 
 ### Fixed

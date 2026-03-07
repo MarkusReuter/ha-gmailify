@@ -289,7 +289,8 @@ class GmxClient:
 
         while not stop_event.is_set():
             try:
-                idle_task = await self._client.idle_start(timeout=IDLE_TIMEOUT_SECONDS)
+                # Start IDLE without internal timeout — we control timing via asyncio.wait
+                idle_task = await self._client.idle_start()
 
                 push_future = asyncio.ensure_future(self._client.wait_server_push())
                 stop_future = asyncio.ensure_future(stop_event.wait())
@@ -309,8 +310,9 @@ class GmxClient:
                     except (asyncio.CancelledError, Exception):
                         pass
 
-                # Stop IDLE
-                self._client.idle_done()
+                # Stop IDLE (only if still active)
+                if not idle_task.done():
+                    self._client.idle_done()
                 await asyncio.wait_for(idle_task, timeout=10)
 
                 if stop_event.is_set():
