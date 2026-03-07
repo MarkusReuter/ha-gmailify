@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.9
+
+### Fixed
+- IDLE reconnects after GMX `BYE timeout`: `idle_start()` now has a 30s timeout guard so a dead connection triggers a reconnect instead of hanging forever
+
 ## 1.1.8
 
 ### Fixed
