@@ -289,8 +289,11 @@ class GmxClient:
 
         while not stop_event.is_set():
             try:
-                # Start IDLE without internal timeout — we control timing via asyncio.wait
-                idle_task = await self._client.idle_start()
+                # Start IDLE with timeout guard — GMX may BYE-kill the connection,
+                # leaving idle_start() hanging forever waiting for "+ idling"
+                idle_task = await asyncio.wait_for(
+                    self._client.idle_start(), timeout=30
+                )
 
                 push_future = asyncio.ensure_future(self._client.wait_server_push())
                 stop_future = asyncio.ensure_future(stop_event.wait())
@@ -336,8 +339,8 @@ class GmxClient:
                         pass
 
             except asyncio.TimeoutError:
-                logger.debug("IDLE timeout on %s, re-issuing", folder)
-                continue
+                logger.warning("IDLE timed out on %s, connection likely dead", folder)
+                raise ConnectionError(f"IDLE timeout on {folder}")
             except Exception as e:
                 logger.error("IDLE error on %s: %s", folder, e)
                 raise
