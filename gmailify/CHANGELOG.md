@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.6
+
+### Fixed
+- Gmail OAuth credentials are now hot-reloaded after re-authentication — no addon restart required when the token expires
+
 ## 1.1.5
 
 ### Fixed
