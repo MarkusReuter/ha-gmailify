@@ -22,6 +22,11 @@ class GmailClient:
 
         credentials_dict: {client_id, client_secret, refresh_token}
         """
+        self._build_service(credentials_dict)
+        self._label_cache: dict[str, str] = {}
+        logger.info("Gmail API client initialized")
+
+    def _build_service(self, credentials_dict: dict) -> None:
         creds = Credentials(
             token=None,
             refresh_token=credentials_dict["refresh_token"],
@@ -30,8 +35,12 @@ class GmailClient:
             token_uri=credentials_dict.get("token_uri", TOKEN_URI),
         )
         self._service = build("gmail", "v1", credentials=creds)
-        self._label_cache: dict[str, str] = {}
-        logger.info("Gmail API client initialized")
+
+    def reload_credentials(self, credentials_dict: dict) -> None:
+        """Replace the Gmail service with fresh credentials (no restart needed)."""
+        self._build_service(credentials_dict)
+        self._label_cache.clear()
+        logger.info("Gmail API client credentials reloaded")
 
     def ensure_label(self, label_name: str) -> str:
         """Get or create a Gmail label. Returns the label ID.
