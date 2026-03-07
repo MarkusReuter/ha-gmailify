@@ -148,6 +148,12 @@ async def handle_oauth_callback(request: web.Request) -> web.Response:
     config.save_gmail_token(credentials)
     logger.info("Gmail OAuth2 tokens saved successfully")
 
+    # Hot-reload credentials into running Gmail client (no restart needed)
+    engine = request.app.get("engine")
+    if engine and hasattr(engine, "_gmail"):
+        engine._gmail.reload_credentials(credentials)
+        logger.info("Gmail client credentials hot-reloaded")
+
     # Redirect to dashboard
     ingress_path = request["ingress_path"]
     raise web.HTTPFound(f"{ingress_path}/")
