@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.10
+
+### Fixed
+- Cancel zombie `_periodic_sync` tasks on IDLE reconnect: `asyncio.gather` didn't cancel the surviving task when one failed, causing duplicate sync loops that multiplied with each reconnect
+
 ## 1.1.9
 
 ### Fixed
