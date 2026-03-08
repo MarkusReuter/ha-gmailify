@@ -79,10 +79,20 @@ class SyncEngine:
                     await self._gmx_fetch.disconnect()
 
                 # Run IDLE and periodic sync in parallel on separate connections
-                await asyncio.gather(
-                    self._idle_inbox(),
-                    self._periodic_sync(),
-                )
+                idle_task = asyncio.ensure_future(self._idle_inbox())
+                sync_task = asyncio.ensure_future(self._periodic_sync())
+                try:
+                    await asyncio.gather(idle_task, sync_task)
+                except Exception:
+                    # Cancel surviving task before reconnecting
+                    for task in (idle_task, sync_task):
+                        if not task.done():
+                            task.cancel()
+                            try:
+                                await task
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                    raise
             except Exception as e:
                 self.stats.gmx_connected = False
                 self.stats.record_error(f"Connection error: {e}")
