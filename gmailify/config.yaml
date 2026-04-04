@@ -1,5 +1,5 @@
 name: "Gmailify"
-version: "1.1.10"
+version: "1.1.11"
 slug: "gmailify"
 description: "Sync GMX emails to Gmail via IMAP IDLE"
 arch:

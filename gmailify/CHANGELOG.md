@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.11
+
+### Fixed
+- Detect GMX `BYE timeout` in IDLE push data and reconnect immediately instead of running on a zombie connection for minutes
+- Add NOOP liveness check after each IDLE cycle to catch dead connections before re-entering IDLE
+
 ## 1.1.10
 
 ### Fixed
