@@ -321,22 +321,45 @@ class GmxClient:
                 if stop_event.is_set():
                     break
 
-                # Timeout (done is empty) — re-issue IDLE
-                if not done:
-                    logger.debug("IDLE timeout on %s, re-issuing", folder)
-                    continue
-
                 # Check if we got new mail notification
                 if push_future in done:
                     try:
                         result = push_future.result()
                         logger.debug("IDLE push on %s: %s", folder, result)
-                        if result and any("EXISTS" in str(r) for r in (result if isinstance(result, list) else [result])):
+                        # Detect server BYE (GMX kills idle connections after ~14 min)
+                        responses = result if isinstance(result, list) else [result]
+                        if result and any("BYE" in str(r) for r in responses):
+                            logger.warning("Server sent BYE during IDLE on %s", folder)
+                            raise ConnectionError(f"Server BYE on {folder}")
+                        if result and any("EXISTS" in str(r) for r in responses):
                             logger.info("New mail detected in %s", folder)
                             if on_new_mail:
                                 on_new_mail.set()
+                    except ConnectionError:
+                        raise
                     except Exception:
                         pass
+                elif not done:
+                    # Timeout (done is empty) — will re-issue IDLE after liveness check
+                    logger.debug("IDLE timeout on %s, re-issuing", folder)
+
+                # Verify connection is still alive before re-entering IDLE
+                try:
+                    noop_resp = await asyncio.wait_for(
+                        self._client.noop(), timeout=10
+                    )
+                    if noop_resp.result != "OK":
+                        raise ConnectionError(
+                            f"NOOP failed on {folder}: {noop_resp.result}"
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning("NOOP timed out on %s, connection dead", folder)
+                    raise ConnectionError(f"NOOP timeout on {folder}")
+                except ConnectionError:
+                    raise
+                except Exception as e:
+                    logger.warning("NOOP error on %s: %s", folder, e)
+                    raise ConnectionError(f"NOOP error on {folder}: {e}")
 
             except asyncio.TimeoutError:
                 logger.warning("IDLE timed out on %s, connection likely dead", folder)
