@@ -14,6 +14,24 @@ IDLE_TIMEOUT_SECONDS = 5 * 60  # Re-issue IDLE every 5 min (GMX drops connection
 RECONNECT_DELAYS = [5, 10, 30, 60, 300]  # Exponential backoff in seconds
 
 
+class _ByeDetector(logging.Handler):
+    """Intercepts BYE responses that aioimaplib silently ignores.
+
+    aioimaplib logs "ignored untagged response : b'BYE ...'" but never
+    surfaces it to the caller.  This handler watches that logger and
+    sets an asyncio.Event so idle_loop can react immediately.
+    """
+
+    def __init__(self, bye_event: asyncio.Event):
+        super().__init__()
+        self._bye_event = bye_event
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if "ignored untagged response" in msg and "BYE" in msg:
+            self._bye_event.set()
+
+
 @dataclass
 class RawEmail:
     uid: int
@@ -284,89 +302,103 @@ class GmxClient:
         if stop_event is None:
             stop_event = asyncio.Event()
 
-        await self.select_folder(folder, force=True)
-        logger.info("Starting IDLE on %s", folder)
+        # Hook into aioimaplib's logger to catch BYE responses it silently drops
+        bye_event = asyncio.Event()
+        bye_handler = _ByeDetector(bye_event)
+        aioimaplib_logger = logging.getLogger("aioimaplib.aioimaplib")
+        aioimaplib_logger.addHandler(bye_handler)
 
-        while not stop_event.is_set():
-            try:
-                # Start IDLE with timeout guard — GMX may BYE-kill the connection,
-                # leaving idle_start() hanging forever waiting for "+ idling"
-                idle_task = await asyncio.wait_for(
-                    self._client.idle_start(), timeout=30
-                )
+        try:
+            await self.select_folder(folder, force=True)
+            logger.info("Starting IDLE on %s", folder)
 
-                push_future = asyncio.ensure_future(self._client.wait_server_push())
-                stop_future = asyncio.ensure_future(stop_event.wait())
+            while not stop_event.is_set():
+                try:
+                    # Start IDLE with timeout guard — GMX may BYE-kill the connection,
+                    # leaving idle_start() hanging forever waiting for "+ idling"
+                    idle_task = await asyncio.wait_for(
+                        self._client.idle_start(), timeout=30
+                    )
 
-                # Timeout prevents hanging forever on a dead connection
-                done, pending = await asyncio.wait(
-                    [push_future, stop_future],
-                    return_when=asyncio.FIRST_COMPLETED,
-                    timeout=IDLE_TIMEOUT_SECONDS,
-                )
+                    push_future = asyncio.ensure_future(self._client.wait_server_push())
+                    stop_future = asyncio.ensure_future(stop_event.wait())
+                    bye_future = asyncio.ensure_future(bye_event.wait())
 
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
+                    # Timeout prevents hanging forever on a dead connection
+                    done, pending = await asyncio.wait(
+                        [push_future, stop_future, bye_future],
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=IDLE_TIMEOUT_SECONDS,
+                    )
+
+                    # Cancel pending tasks
+                    for task in pending:
+                        task.cancel()
+                        try:
+                            await task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+
+                    # Stop IDLE (only if still active)
+                    if not idle_task.done():
+                        self._client.idle_done()
+                    await asyncio.wait_for(idle_task, timeout=10)
+
+                    if stop_event.is_set():
+                        break
+
+                    # Server sent BYE — aioimaplib swallowed it but our handler caught it
+                    if bye_future in done:
+                        logger.warning("Server sent BYE during IDLE on %s (detected via log intercept)", folder)
+                        raise ConnectionError(f"Server BYE on {folder}")
+
+                    # Check if we got new mail notification
+                    if push_future in done:
+                        try:
+                            result = push_future.result()
+                            logger.debug("IDLE push on %s: %s", folder, result)
+                            responses = result if isinstance(result, list) else [result]
+                            if result and any("BYE" in str(r) for r in responses):
+                                logger.warning("Server sent BYE during IDLE on %s", folder)
+                                raise ConnectionError(f"Server BYE on {folder}")
+                            if result and any("EXISTS" in str(r) for r in responses):
+                                logger.info("New mail detected in %s", folder)
+                                if on_new_mail:
+                                    on_new_mail.set()
+                        except ConnectionError:
+                            raise
+                        except Exception:
+                            pass
+                    elif not done:
+                        # Timeout (done is empty) — will re-issue IDLE after liveness check
+                        logger.debug("IDLE timeout on %s, re-issuing", folder)
+
+                    # Verify connection is still alive before re-entering IDLE
                     try:
-                        await task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-
-                # Stop IDLE (only if still active)
-                if not idle_task.done():
-                    self._client.idle_done()
-                await asyncio.wait_for(idle_task, timeout=10)
-
-                if stop_event.is_set():
-                    break
-
-                # Check if we got new mail notification
-                if push_future in done:
-                    try:
-                        result = push_future.result()
-                        logger.debug("IDLE push on %s: %s", folder, result)
-                        # Detect server BYE (GMX kills idle connections after ~14 min)
-                        responses = result if isinstance(result, list) else [result]
-                        if result and any("BYE" in str(r) for r in responses):
-                            logger.warning("Server sent BYE during IDLE on %s", folder)
-                            raise ConnectionError(f"Server BYE on {folder}")
-                        if result and any("EXISTS" in str(r) for r in responses):
-                            logger.info("New mail detected in %s", folder)
-                            if on_new_mail:
-                                on_new_mail.set()
+                        noop_resp = await asyncio.wait_for(
+                            self._client.noop(), timeout=10
+                        )
+                        if noop_resp.result != "OK":
+                            raise ConnectionError(
+                                f"NOOP failed on {folder}: {noop_resp.result}"
+                            )
+                    except asyncio.TimeoutError:
+                        logger.warning("NOOP timed out on %s, connection dead", folder)
+                        raise ConnectionError(f"NOOP timeout on {folder}")
                     except ConnectionError:
                         raise
-                    except Exception:
-                        pass
-                elif not done:
-                    # Timeout (done is empty) — will re-issue IDLE after liveness check
-                    logger.debug("IDLE timeout on %s, re-issuing", folder)
+                    except Exception as e:
+                        logger.warning("NOOP error on %s: %s", folder, e)
+                        raise ConnectionError(f"NOOP error on {folder}: {e}")
 
-                # Verify connection is still alive before re-entering IDLE
-                try:
-                    noop_resp = await asyncio.wait_for(
-                        self._client.noop(), timeout=10
-                    )
-                    if noop_resp.result != "OK":
-                        raise ConnectionError(
-                            f"NOOP failed on {folder}: {noop_resp.result}"
-                        )
                 except asyncio.TimeoutError:
-                    logger.warning("NOOP timed out on %s, connection dead", folder)
-                    raise ConnectionError(f"NOOP timeout on {folder}")
-                except ConnectionError:
-                    raise
+                    logger.warning("IDLE timed out on %s, connection likely dead", folder)
+                    raise ConnectionError(f"IDLE timeout on {folder}")
                 except Exception as e:
-                    logger.warning("NOOP error on %s: %s", folder, e)
-                    raise ConnectionError(f"NOOP error on {folder}: {e}")
-
-            except asyncio.TimeoutError:
-                logger.warning("IDLE timed out on %s, connection likely dead", folder)
-                raise ConnectionError(f"IDLE timeout on {folder}")
-            except Exception as e:
-                logger.error("IDLE error on %s: %s", folder, e)
-                raise
+                    logger.error("IDLE error on %s: %s", folder, e)
+                    raise
+        finally:
+            aioimaplib_logger.removeHandler(bye_handler)
 
     async def __aenter__(self):
         await self.connect()
