@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.12
+
+### Fixed
+- Intercept aioimaplib's silently swallowed `BYE timeout` via log handler: aioimaplib never surfaces BYE to `wait_server_push()`, and GMX keeps TCP alive after BYE so NOOP passes for ~16 min. Now a `_ByeDetector` hooks into aioimaplib's logger and sets an `asyncio.Event` that `idle_loop` waits on alongside push/stop/timeout, triggering immediate reconnect
+
 ## 1.1.11
 
 ### Fixed
