@@ -188,6 +188,7 @@ class SyncEngine:
                     folder=inbox_folder,
                     on_new_mail=self._new_mail_event,
                     stop_event=self._stop_event,
+                    idle_timeout=self._config.idle_timeout_seconds,
                 )
             except Exception as e:
                 if self._stop_event.is_set():

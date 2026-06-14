@@ -20,6 +20,7 @@ class Config:
     google_client_id: str = ""
     google_client_secret: str = ""
     sync_interval_minutes: int = 15
+    idle_timeout_seconds: int = 120
     folders: list[str] = field(default_factory=lambda: ["INBOX", "Gesendet"])
 
     @property
@@ -49,5 +50,6 @@ def load_config() -> Config:
         google_client_id=data.get("google_client_id", ""),
         google_client_secret=data.get("google_client_secret", ""),
         sync_interval_minutes=data.get("sync_interval_minutes", 15),
+        idle_timeout_seconds=data.get("idle_timeout_seconds", 120),
         folders=data.get("folders", ["INBOX", "Gesendet"]),
     )

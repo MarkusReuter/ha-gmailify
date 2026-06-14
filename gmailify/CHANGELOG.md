@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.13
+
+### Changed
+- Shorten default IDLE re-issue interval from 5 min to 2 min: GMX silently drops the IDLE connection (half-open, no BYE) and the NOOP liveness check can only run at the end of each IDLE cycle. A shorter window bounds the worst-case real-time detection latency of a dead push connection from ~5 min to ~2 min
+
+### Added
+- New `idle_timeout_seconds` option (default 120, range 30–600) to tune the IDLE re-issue / liveness-probe interval without a code change — lower values reduce real-time push-recovery latency at the cost of more frequent re-issues
+
 ## 1.1.12
 
 ### Fixed

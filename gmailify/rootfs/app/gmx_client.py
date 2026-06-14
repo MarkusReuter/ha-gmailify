@@ -10,7 +10,7 @@ import aioimaplib
 
 logger = logging.getLogger(__name__)
 
-IDLE_TIMEOUT_SECONDS = 5 * 60  # Re-issue IDLE every 5 min (GMX drops connections faster than RFC limit)
+IDLE_TIMEOUT_SECONDS = 2 * 60  # Default re-issue IDLE + NOOP interval (overridable via idle_timeout_seconds config): bounds worst-case detection of a silently dropped (half-open) GMX connection, since no liveness probe is possible while IDLE is active
 RECONNECT_DELAYS = [5, 10, 30, 60, 300]  # Exponential backoff in seconds
 
 
@@ -292,15 +292,20 @@ class GmxClient:
         folder: str,
         on_new_mail: "asyncio.Future | None" = None,
         stop_event: asyncio.Event | None = None,
+        idle_timeout: int | None = None,
     ) -> None:
         """Run IMAP IDLE on a folder, calling on_new_mail when new messages arrive.
 
-        Re-issues IDLE every IDLE_TIMEOUT_SECONDS.
+        Re-issues IDLE (and runs a NOOP liveness check) every ``idle_timeout``
+        seconds, defaulting to IDLE_TIMEOUT_SECONDS. A shorter value lowers the
+        worst-case latency for detecting a silently dropped connection.
         Uses timeout on asyncio.wait so dead connections don't block forever.
         Stops when stop_event is set.
         """
         if stop_event is None:
             stop_event = asyncio.Event()
+        if idle_timeout is None:
+            idle_timeout = IDLE_TIMEOUT_SECONDS
 
         # Hook into aioimaplib's logger to catch BYE responses it silently drops
         bye_event = asyncio.Event()
@@ -328,7 +333,7 @@ class GmxClient:
                     done, pending = await asyncio.wait(
                         [push_future, stop_future, bye_future],
                         return_when=asyncio.FIRST_COMPLETED,
-                        timeout=IDLE_TIMEOUT_SECONDS,
+                        timeout=idle_timeout,
                     )
 
                     # Cancel pending tasks

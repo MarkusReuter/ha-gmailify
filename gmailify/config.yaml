@@ -1,5 +1,5 @@
 name: "Gmailify"
-version: "1.1.12"
+version: "1.1.13"
 slug: "gmailify"
 description: "Sync GMX emails to Gmail via IMAP IDLE"
 arch:
@@ -24,6 +24,7 @@ options:
   google_client_id: ""
   google_client_secret: ""
   sync_interval_minutes: 15
+  idle_timeout_seconds: 120
   folders:
     - "INBOX"
     - "Gesendet"
@@ -33,5 +34,6 @@ schema:
   google_client_id: str
   google_client_secret: password
   sync_interval_minutes: "int(1,60)"
+  idle_timeout_seconds: "int(30,600)"
   folders:
     - str
