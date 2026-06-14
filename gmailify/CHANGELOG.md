@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.14
+
+### Fixed
+- Add missing `build.yaml` defining the Home Assistant Alpine base images per architecture. Without it the Supervisor passed an empty `BUILD_FROM`, so `FROM ${BUILD_FROM}` failed with "base name should not be blank" and the addon image could not be built
+
 ## 1.1.13
 
 ### Changed
